@@ -1,39 +1,82 @@
 import requests
+import hashlib
+import html
+from datetime import datetime
+from email.utils import format_datetime
+import xml.etree.ElementTree as ET
 
-SOURCE_URL = "https://big-rose.jp/event_post/feed/"
+API_URL = "https://big-rose.jp/wp-json/wp/v2/event_post"
+SITE_URL = "https://big-rose.jp/event_post/"
 OUTPUT = "bigrose.xml"
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/154.0.0.0 Safari/537.36"
-    )
+    "User-Agent": "Mozilla/5.0"
+}
+
+params = {
+    "per_page": 100,
+    "orderby": "date",
+    "order": "desc"
 }
 
 response = requests.get(
-    SOURCE_URL,
+    API_URL,
     headers=HEADERS,
+    params=params,
     timeout=30
 )
 
-print("公式RSS HTTP:", response.status_code)
-
+print("REST API HTTP:", response.status_code)
 response.raise_for_status()
 
-# XMLをバイト列のまま保存
-# 文字コードやRSS内部の情報を余計に変更しない
-with open(OUTPUT, "wb") as f:
-    f.write(response.content)
+posts = response.json()
+
+print("取得件数:", len(posts))
+
+rss = ET.Element("rss", version="2.0")
+channel = ET.SubElement(rss, "channel")
+
+ET.SubElement(channel, "title").text = "福山ビッグ・ローズ イベント情報"
+ET.SubElement(channel, "link").text = SITE_URL
+ET.SubElement(channel, "description").text = "福山ビッグ・ローズのイベント情報"
+ET.SubElement(channel, "language").text = "ja"
+
+for i, post in enumerate(posts, 1):
+    title = html.unescape(post.get("title", {}).get("rendered", "")).strip()
+    link = post.get("link", "").strip()
+    date_text = post.get("date", "")
+
+    if not title or not link or not date_text:
+        continue
+
+    dt = datetime.fromisoformat(date_text)
+
+    item = ET.SubElement(channel, "item")
+
+    ET.SubElement(item, "title").text = title
+    ET.SubElement(item, "link").text = link
+    ET.SubElement(item, "description").text = title
+    ET.SubElement(item, "pubDate").text = format_datetime(dt)
+    ET.SubElement(item, "guid").text = hashlib.sha256(
+        link.encode("utf-8")
+    ).hexdigest()
+
+    if i <= 10:
+        print()
+        print(f"[{i}] {title}")
+        print("    ", date_text)
+        print("    ", link)
+
+tree = ET.ElementTree(rss)
+ET.indent(tree, space="  ")
+
+tree.write(
+    OUTPUT,
+    encoding="utf-8",
+    xml_declaration=True
+)
 
 print()
-print("RSS取得成功")
+print("RSS作成成功")
+print("保存件数:", len(posts))
 print("保存:", OUTPUT)
-print("サイズ:", len(response.content), "bytes")
-
-# 内容確認
-text = response.content.decode("utf-8", errors="replace")
-
-print()
-print("先頭500文字:")
-print(text[:500])
